@@ -1,3 +1,4 @@
+import time
 import cv2
 import numpy as np
 import socket
@@ -24,7 +25,7 @@ bbox = None
 # Start video capture from webcam
 cap = cv2.VideoCapture(0)
 
-print("Starting Video feed process. Kill terminal to interrupt")
+print("Starting Video feed process. Press 'q' to quit, 'r' to reset tracking.")
 
 while True:
     # Capture frame-by-frame
@@ -33,7 +34,7 @@ while True:
         break
 
     # Flip the frame horizontally for natural interaction
-    frame = cv2.flip(frame, 1)
+    #frame = cv2.flip(frame, 1)
 
     # Resize the frame to a smaller resolution before sending
     frame = cv2.resize(frame, (320, 240))  # Change to smaller resolution if necessary
@@ -56,6 +57,12 @@ while True:
             p1 = (int(bbox[0]), int(bbox[1]))
             p2 = (int(bbox[0] + bbox[2]), int(bbox[1] + bbox[3]))
             cv2.rectangle(frame, p1, p2, (0, 255, 0), 2)
+
+            # Send ball position (center of the bounding box) to Unity
+            x_center = int(bbox[0] + bbox[2] / 2)
+            y_center = int(bbox[1] + bbox[3] / 2)
+            ball_position_data = f"{x_center},{y_center}".encode()
+            udp_client_ball.sendto(ball_position_data, (server_ip, ball_server_port))
         else:
             tracking = False
 
@@ -71,7 +78,6 @@ while True:
         mask1 = cv2.inRange(hsv_frame, lower_red1, upper_red1)
         mask2 = cv2.inRange(hsv_frame, lower_red2, upper_red2)
         red_mask = mask1 + mask2
-        red_mask = cv2.GaussianBlur(red_mask, (5, 5), 0)
 
         contours, _ = cv2.findContours(red_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -79,7 +85,6 @@ while True:
         best_circle = None
 
         for contour in contours:
-            approx = cv2.approxPolyDP(contour, 0.02 * cv2.arcLength(contour, True), True)
             area = cv2.contourArea(contour)
             perimeter = cv2.arcLength(contour, True)
             if perimeter == 0:
@@ -97,6 +102,16 @@ while True:
             tracker.init(frame, bbox)
             tracking = True
 
+            # Send ball position to Unity
+            ball_position_data = f"{x},{y}".encode()
+            udp_client_ball.sendto(ball_position_data, (server_ip, ball_server_port))
+        else:
+            # If no red ball is found, send (0, 0) or some "no ball" indicator
+            ball_position_data = f"0,0".encode()
+            udp_client_ball.sendto(ball_position_data, (server_ip, ball_server_port))
+
+    time.sleep(0.05)  # Add delay to avoid overwhelming the network
+
     # Encode the frame to JPEG
     _, buffer = cv2.imencode('.jpg', frame)
     frame_bytes = buffer.tobytes()
@@ -107,10 +122,16 @@ while True:
         chunk = frame_bytes[i:i + chunk_size]
         udp_client_video.sendto(chunk, (server_ip, video_server_port))
 
-    # Break loop if 'q' is pressed
+    # Check for key presses
     if keyboard.is_pressed('q'):
         print("Interrupted process by user")
         break
+
+    if keyboard.is_pressed('r'):
+        print("Resetting tracking.")
+        tracking = False
+        bbox = None
+        tracker = cv2.TrackerCSRT_create()  # Reinitialize the tracker
 
 # Release the webcam and close resources
 cap.release()
