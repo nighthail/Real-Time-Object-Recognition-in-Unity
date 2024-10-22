@@ -18,8 +18,8 @@ public class RacketReceiver : MonoBehaviour
     private float pythonHeight = 240f;
 
     // Resolution of the Unity RawImage (640x480)
-    private float unityWidth = 640f;
-    private float unityHeight = 480f;
+    private float unityWidth = 1280f;
+    private float unityHeight = 960f;
 
     Vector2 ballPosition;  // Stores the ball's position
 
