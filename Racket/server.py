@@ -7,12 +7,10 @@ import keyboard
 # Server configuration
 server_ip = '127.0.0.1'
 video_server_port = 8001
-resolution_port = 8003  # Port to send resolution data
 ball_server_port = 8002  # Port to send ball data
 
 # Initialize UDP clients
 udp_client_video = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-udp_client_resolution = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_client_ball = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # New UDP client for ball info
 
 # Initialize the tracker
@@ -25,26 +23,26 @@ bbox = None
 # Start video capture from webcam
 cap = cv2.VideoCapture(0)
 
+# Verify if the webcam is initialized correctly
+if not cap.isOpened():
+    print("Error: Could not open video feed.")
+    exit()
+
 print("Starting Video feed process. Press 'q' to quit, 'r' to reset tracking.")
+
+# Flag to send resolution only once
+resolution_sent = False
 
 while True:
     # Capture frame-by-frame
     ret, frame = cap.read()
-    if not ret:
-        break
 
-    # Flip the frame horizontally for natural interaction
-    #frame = cv2.flip(frame, 1)
+    if not ret:
+        print("Error: Could not read frame.")
+        break
 
     # Resize the frame to a smaller resolution before sending
     frame = cv2.resize(frame, (320, 240))  # Change to smaller resolution if necessary
-
-    # Get camera resolution
-    height, width, _ = frame.shape
-
-    # Send the resolution periodically
-    resolution_data = f"{width},{height}".encode()
-    udp_client_resolution.sendto(resolution_data, (server_ip, resolution_port))
 
     # Convert the frame to RGB for processing
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -53,7 +51,7 @@ while True:
     if tracking:
         success, bbox = tracker.update(frame)
         if success:
-            # If tracking is successful, draw the bounding box
+            # Dynamically update the bounding box as the object moves or changes size
             p1 = (int(bbox[0]), int(bbox[1]))
             p2 = (int(bbox[0] + bbox[2]), int(bbox[1] + bbox[3]))
             cv2.rectangle(frame, p1, p2, (0, 255, 0), 2)
@@ -70,16 +68,13 @@ while True:
     if not tracking:
         hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-        lower_red1 = np.array([0, 120, 70])
-        upper_red1 = np.array([10, 255, 255])
-        lower_red2 = np.array([170, 120, 70])
-        upper_red2 = np.array([180, 255, 255])
+        # Step 1: Detect the green ball
+        lower_green = np.array([35, 50, 50])  # Lower bound for green
+        upper_green = np.array([85, 255, 255])  # Upper bound for green
+        green_mask = cv2.inRange(hsv_frame, lower_green, upper_green)
 
-        mask1 = cv2.inRange(hsv_frame, lower_red1, upper_red1)
-        mask2 = cv2.inRange(hsv_frame, lower_red2, upper_red2)
-        red_mask = mask1 + mask2
-
-        contours, _ = cv2.findContours(red_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        # Find green contours
+        contours, _ = cv2.findContours(green_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
         max_radius = 0
         best_circle = None
@@ -90,27 +85,55 @@ while True:
             if perimeter == 0:
                 continue
             circularity = 4 * np.pi * (area / (perimeter ** 2))
-            if 0.7 < circularity < 1.2:
+            if 0.7 < circularity < 1.2:  # Ensure it's a circular shape
                 ((x, y), radius) = cv2.minEnclosingCircle(contour)
-                if radius > max_radius and radius > 10:
+                if radius > max_radius and radius > 10:  # Filter based on size
                     max_radius = radius
                     best_circle = (int(x), int(y), int(radius))
 
+        # Step 2: Detect a white circle around the green ball
         if best_circle is not None:
             x, y, radius = best_circle
             bbox = (x - radius, y - radius, 2 * radius, 2 * radius)
-            tracker.init(frame, bbox)
-            tracking = True
 
-            # Send ball position to Unity
-            ball_position_data = f"{x},{y}".encode()
-            udp_client_ball.sendto(ball_position_data, (server_ip, ball_server_port))
-        else:
-            # If no red ball is found, send (0, 0) or some "no ball" indicator
-            ball_position_data = f"0,0".encode()
-            udp_client_ball.sendto(ball_position_data, (server_ip, ball_server_port))
+            # Now look for white contours (for the circles) in the region around the green ball
+            lower_white = np.array([0, 0, 200])  # HSV range for white
+            upper_white = np.array([180, 30, 255])
 
-    time.sleep(0.05)  # Add delay to avoid overwhelming the network
+            # Create a mask for white color and search for the white contours
+            white_mask = cv2.inRange(hsv_frame, lower_white, upper_white)
+            white_contours, _ = cv2.findContours(white_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+            large_white_circle_found = False
+            small_white_circle_found = False
+
+            for white_contour in white_contours:
+                (white_x, white_y), white_radius = cv2.minEnclosingCircle(white_contour)
+                white_radius = int(white_radius)
+
+                # Check for a large white circle around the green ball
+                if radius * 1.2 < white_radius < radius * 1.5:
+                    large_white_circle_found = True
+                # Check for a small white circle inside the green ball
+                if white_radius < radius * 0.5:
+                    small_white_circle_found = True
+
+            if large_white_circle_found and small_white_circle_found:
+                # Initialize tracking if both circles are found
+                tracker.init(frame, bbox)
+                tracking = True
+
+                # Draw the dynamically identified object immediately
+                cv2.circle(frame, (x, y), int(radius), (0, 255, 0), 2)  # Green circle
+                ball_position_data = f"{x},{y}".encode()
+                udp_client_ball.sendto(ball_position_data, (server_ip, ball_server_port))
+            else:
+                # If white circles are not found, reset the tracking attempt
+                ball_position_data = f"0,0".encode()
+                udp_client_ball.sendto(ball_position_data, (server_ip, ball_server_port))
+
+    # Add delay to avoid overwhelming the network
+    time.sleep(0.05)
 
     # Encode the frame to JPEG
     _, buffer = cv2.imencode('.jpg', frame)
@@ -137,5 +160,4 @@ while True:
 cap.release()
 cv2.destroyAllWindows()
 udp_client_video.close()
-udp_client_resolution.close()
 udp_client_ball.close()
