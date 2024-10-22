@@ -28,7 +28,7 @@ Instructions:
 Instructions:
 1. Start an anaconda environment
 2. Install dependencies
-3. Run python hand_detection.py
+3. Run python server.py
 
 4. Open project in unity
 5. Load UnityToPython scene
