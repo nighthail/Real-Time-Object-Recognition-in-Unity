@@ -35,7 +35,7 @@ Instructions:
 6. Run the game
 
 ## License
-Placeholder
+This is an unfinished school project. Feel free to expand on it on your own.
 
 ## Acknowledgements
 
