@@ -1,9 +1,9 @@
-# Word Pop! Unity game with Mediapipe
+# Unity game with Mediapipe
 
 ## Description
 
 Machinelearning integrated interactive webcamera based Unity game.
-
+This project is unfinished as it was part of a scrapped school project. I might expand on it at a later stage. Feel free to expand it on your own.
 
 
 
